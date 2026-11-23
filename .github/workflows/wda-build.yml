@@ -1,5 +1,10 @@
 name: Build WebDriverAgent IPA (unsigned)
 
+# 与上一版唯一的区别：先切到 Xcode 16.x 再编译。
+# 原因：用最新 Xcode（iOS 26 SDK）编出来的 runner，其 Testing.framework 依赖
+# lib_TestingInterop.dylib，而 iOS 26.1 设备上能挂的 DDI 里没有这个库；
+# 用 Xcode 16.x（iOS 18 SDK）编，就不需要它。
+
 on:
   workflow_dispatch:
   push:
@@ -10,8 +15,19 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 40
     steps:
-      - name: Toolchain
+      - name: Show available Xcodes
+        run: ls /Applications | grep -i '^Xcode' || true
+
+      - name: Switch to Xcode 16.x if present
         run: |
+          set -e
+          for v in 16.4 16.3 16.2 16.1 16.0; do
+            if [ -d "/Applications/Xcode_$v.app" ]; then
+              echo "using Xcode_$v"
+              sudo xcode-select -s "/Applications/Xcode_$v.app"
+              break
+            fi
+          done
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
 
@@ -35,13 +51,14 @@ jobs:
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER=""
 
-      - name: Package Payload into IPA
+      - name: Package Payload into IPA (dSYM stripped)
         run: |
           set -e
           APP=$(find WebDriverAgent/build/Build/Products -maxdepth 2 -name 'WebDriverAgentRunner-Runner.app' | head -1)
           echo "runner app: $APP"
           test -n "$APP"
           plutil -p "$APP/Info.plist" | grep -E 'CFBundleIdentifier|MinimumOSVersion' || true
+          find "$APP" -name '*.dSYM' -type d -prune -exec rm -rf {} + || true
           rm -rf out && mkdir -p out/Payload
           cp -R "$APP" out/Payload/
           cd out && zip -qry ../WebDriverAgent-unsigned.ipa Payload
