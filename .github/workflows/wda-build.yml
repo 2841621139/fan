@@ -1,0 +1,56 @@
+name: Build WebDriverAgent IPA (unsigned)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Clone WebDriverAgent
+        run: git clone --depth 1 https://github.com/appium/WebDriverAgent.git
+
+      - name: Build for testing (no codesign)
+        run: |
+          set -e
+          cd WebDriverAgent
+          xcodebuild build-for-testing \
+            -project WebDriverAgent.xcodeproj \
+            -scheme WebDriverAgentRunner \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -configuration Debug \
+            -derivedDataPath "$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: Package Payload into IPA
+        run: |
+          set -e
+          APP=$(find WebDriverAgent/build/Build/Products -maxdepth 2 -name 'WebDriverAgentRunner-Runner.app' | head -1)
+          echo "runner app: $APP"
+          test -n "$APP"
+          plutil -p "$APP/Info.plist" | grep -E 'CFBundleIdentifier|MinimumOSVersion' || true
+          rm -rf out && mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          cd out && zip -qry ../WebDriverAgent-unsigned.ipa Payload
+          cd .. && ls -l WebDriverAgent-unsigned.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebDriverAgent-unsigned-ipa
+          path: WebDriverAgent-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
