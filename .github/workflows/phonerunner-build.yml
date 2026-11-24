@@ -1,0 +1,78 @@
+name: Build PhoneRunner (unsigned IPA)
+
+# 产出 DSH Go「XCTest 增强」需要的 PhoneRunner（<AppBundleId>.PhoneRunner.xctrunner）
+# 用法：放进你的 GitHub 仓库 .github/workflows/phonerunner-build.yml，提交后自动构建，
+# 到 Actions 运行页底部 Artifacts 下载 PhoneRunner-unsigned-ipa。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      APP_BUNDLE: io.github.ccch1mneyyy.dshgo
+
+    steps:
+      - name: Checkout dsh-Go
+        uses: actions/checkout@v4
+        with:
+          repository: ccch1mneyyy/dsh-Go
+          path: dsh-go
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.47.7"
+          cache: true
+
+      - name: flutter pub get
+        working-directory: dsh-go/app
+        run: flutter pub get
+
+      - name: Build PhoneRunner (build-for-testing, no codesign)
+        working-directory: dsh-go
+        run: |
+          set -e
+          xcodebuild build-for-testing \
+            -project app/ios/Runner.xcodeproj \
+            -scheme PhoneRunner \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            "CODE_SIGN_ENTITLEMENTS=PhoneRunner/PhoneRunnerSelf.entitlements" \
+            "PRODUCT_BUNDLE_IDENTIFIER=${APP_BUNDLE}.PhoneRunner"
+
+      - name: Package Payload into IPA
+        run: |
+          set -e
+          APP=$(find dsh-go/build/Build/Products -maxdepth 2 -name 'PhoneRunnerUITests-Runner.app' | head -1)
+          echo "runner app: $APP"
+          test -n "$APP"
+          plutil -p "$APP/Info.plist" | grep -E 'CFBundleIdentifier|MinimumOSVersion' || true
+          find "$APP" -name '*.dSYM' -prune -exec rm -rf {} + || true
+          rm -rf out && mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          cd out && zip -qry ../PhoneRunner-unsigned.ipa Payload
+          cd .. && ls -l PhoneRunner-unsigned.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PhoneRunner-unsigned-ipa
+          path: PhoneRunner-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
